@@ -1,8 +1,0 @@
-.env
-test*.py
-*.xlsx
-*.csv
-*rebuild*.py
-*.log
-clean*.py
-fix*.py
