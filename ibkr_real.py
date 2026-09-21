@@ -12,6 +12,7 @@ from strategy.sell_strategy import PositionState, evaluate_sell
 from strategy.buy_strategy import BuyState, evaluate_buy
 from broker.ibkr_client import IBKRClient
 
+from state_persist import save_states, load_states
 
 log = get_logger("main")
 
@@ -172,7 +173,7 @@ def refresh_holdings(client):
 
 def run_sell(client):
     if not holdings:
-        log.info("无持仓")
+        log.info("无持仓")  
         return
     # 批量拉所有持仓的行情  
     codes = list(holdings.keys())
@@ -212,6 +213,12 @@ def run_sell(client):
                 log.info(f"[SELL-DRY] {code} 信号触发，但 AUTO_SELL=false")
                 notifier.push(f"【卖出信号-未执行】{code} {reason}",
                               key=f"sell_sig_{code}")
+                
+    # 清理已不在持仓里的 sell_states
+    for code in list(sell_states.keys()):
+        if code not in holdings:
+            log.info(f"清理已清仓状态: {code}")
+            sell_states.pop(code, None)
 
 
 # def run_buy(client):
@@ -337,6 +344,14 @@ def run_buy(client):
                 notifier.push(f"【买入信号-未执行】{code} "
                               f"金额{reason['amount']:.2f} 价格{price:.4f}",
                               key=f"buy_sig_{code}")
+
+                
+    # 清理已不在候选池的 buy_states（可选）
+    for code in list(buy_states.keys()):
+        if code not in buy_pool:
+            buy_states.pop(code, None)
+
+            
 def main():
     check_files()
     log.info("=== IBKR 自动交易程序启动 ===")
@@ -344,6 +359,10 @@ def main():
    
     client = IBKRClient()
     client.connect()
+
+    # 恢复状态
+    load_states(sell_states, buy_states, PositionState, BuyState)   
+
     refresh_static(client) 
 
     try:
@@ -361,12 +380,15 @@ def main():
             run_sell(client)
             run_buy(client)
 
+            # 保存状态
+            save_states(sell_states, buy_states)
+
             time.sleep(30)
     except KeyboardInterrupt:
         log.info("收到 Ctrl+C，退出")
     except Exception as e:
         log.exception(f"主循环异常: {e}")
-        notifier.push(f"【程序异常】{e}", key="fatal")
+        notifier.push(f"【程序异常】{e}", key="fatal") # key 固定，但只推一次
     finally:
         client.disconnect()
 

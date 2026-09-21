@@ -28,7 +28,7 @@ def append_invalid_contract(code, reason=""):
     ws = wb.active
     # 去重
     for r in range(2, ws.max_row + 1):
-        if str(ws.cell(row=r, column=1).value).strip() == code:
+        if str(ws.cell(row=r, column=1  ).value).strip() == code:
             wb.close()
             return
     ws.append([code, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), reason])

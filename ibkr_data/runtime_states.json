@@ -1,0 +1,80 @@
+{
+  "sell": {
+    "AAPL": {
+      "activated": true,
+      "max_price": 339.05,
+      "last_push_profit": 10,
+      "is_loss_watch": false
+    },
+    "ORGO": {
+      "activated": false,
+      "max_price": 0.0,
+      "last_push_profit": 0,
+      "is_loss_watch": false
+    },
+    "CABO": {
+      "activated": false,
+      "max_price": 0.0,
+      "last_push_profit": 0,
+      "is_loss_watch": false
+    },
+    "JUNS": {
+      "activated": false,
+      "max_price": 0.0,
+      "last_push_profit": 0,
+      "is_loss_watch": false
+    },
+    "WETO": {
+      "activated": false,
+      "max_price": 0.0,
+      "last_push_profit": 0,
+      "is_loss_watch": false
+    }
+  },
+  "buy": {
+    "CABO": {
+      "activated": true,
+      "min_price": 16.84
+    },
+    "BJDX": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "HKIT": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "CODX": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "LIMN": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "JUNS": {
+      "activated": true,
+      "min_price": 2.88
+    },
+    "ICCM": {
+      "activated": true,
+      "min_price": 1.98
+    },
+    "WETO": {
+      "activated": true,
+      "min_price": 1.64
+    },
+    "MSAI": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "ANVS": {
+      "activated": false,
+      "min_price": Infinity
+    },
+    "REKR": {
+      "activated": false,
+      "min_price": Infinity
+    }
+  }
+}

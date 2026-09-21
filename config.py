@@ -29,6 +29,7 @@ class Config:
     FEISHU_WEBHOOK = os.getenv("FEISHU_WEBHOOK", "")
     FEISHU_SECRET = os.getenv("FEISHU_SECRET", "")
     PUSH_MIN_INTERVAL = int(os.getenv("PUSH_MIN_INTERVAL", "60"))
+    LOOP_INTERVAL = int(os.getenv("LOOP_INTERVAL", "90"))
 
 
     AUTO_BUY = os.getenv("AUTO_BUY", "true").lower() == "true"
