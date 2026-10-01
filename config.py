@@ -65,6 +65,8 @@ class Config:
     LOSS_WATCH = os.path.join(DATA_DIR, "loss_watch.xlsx")
     DYNAMIC_TP = "dynamic_take_profit.csv"
     INVALID_CONTRACTS = os.path.join(DATA_DIR, "invalid_contracts.xlsx")
+    OUT_OF_RANGE_HIGH = os.path.join(DATA_DIR, "out_of_range_high.xlsx")
+    OUT_OF_RANGE_LOW = os.path.join(DATA_DIR, "out_of_range_low.xlsx")
 
 # # config.py 末尾
 # def check_files():

@@ -4,6 +4,10 @@ from config import Config
 from logger import get_logger
 from state_store import load_invalid_contracts, append_invalid_contract
 import time
+# 顶部
+import logging
+# ib_insync 的 INFO/DEBUG 太多了，只保留 WARNING 及以上
+logging.getLogger("ib_insync").setLevel(logging.WARNING)
 
 log = get_logger("ibkr")
 
@@ -58,6 +62,9 @@ class IBKRClient:
                         clientId=Config.IBKR_CLIENT_ID)
         log.info(f"已连接 IBKR {Config.IBKR_HOST}:{Config.IBKR_PORT} "
                  f"账户 {self.ib.managedAccounts()}")
+        
+        # 注册错误处理（过滤 10197）
+        self.ib.errorEvent += self._on_error                     # ← 加这行
 
         mdt = Config.MARKET_DATA_TYPE
         try:
@@ -65,6 +72,83 @@ class IBKRClient:
             log.info(f"行情类型: {mdt} ({MDT_NAMES.get(mdt, '?')})")
         except Exception as e:
             log.warning(f"设置行情类型失败: {e}")
+    #无数次重连
+    def reconnect(self, interval=30):
+        """无限重连，直到成功"""
+        while True:
+            if self.ib.isConnected():
+                return True
+            try:
+                self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
+                                clientId=Config.IBKR_CLIENT_ID)
+                log.info("重连成功")
+                # 恢复行情类型
+                self.ib.reqMarketDataType(Config.MARKET_DATA_TYPE)
+                # 清空合约缓存，重新 qualify
+                self._qualified.clear()
+                return True
+            except Exception as e:
+                log.warning(f"重连失败: {e}")
+                time.sleep(interval)
+    #重试十次方案        
+    # def reconnect(self, max_retries=10, interval=30):
+    #     """断线重连"""
+    #     if self.ib.isConnected():
+    #         return True
+
+    #     for i in range(max_retries):
+    #         try:
+    #             self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
+    #                             clientId=Config.IBKR_CLIENT_ID)
+    #             log.info(f"重连成功（第 {i+1} 次尝试）")
+    #             self.ib.reqMarketDataType(Config.MARKET_DATA_TYPE)
+    #             self._qualified.clear()   # 清空合约缓存
+    #             return True
+    #         except Exception as e:
+    #             log.warning(f"重连失败（第 {i+1}/{max_retries}）: {e}")
+    #             time.sleep(interval)
+
+    #     log.error(f"重连 {max_retries} 次失败")
+    #     return False        
+    
+
+    # def _on_error(self, reqId, errorCode, errorString, contract):
+    #     """拦截 IBKR 错误，过滤 10197（订阅不足）"""
+    #     if errorCode == 10197:
+    #         # 静默忽略：模拟账户订阅不足，延迟行情仍可用
+    #         return
+    #     # 其他错误照常打印
+    #     log.warning(f"IBKR Error {errorCode}: {errorString} (reqId={reqId})")    
+    def _on_error(self, reqId, errorCode, errorString, contract):
+        """
+        分级处理 IBKR 错误：
+        - 纯噪音：静默忽略
+        - 已知警告：降级为 DEBUG
+        - 其他：WARNING
+        """
+        # 类别 1：纯噪音
+        SILENT_CODES = {
+            2103,   # 农场连接中断
+            2104,   # 农场连接正常
+            2119,   # 正在连接农场
+        }
+        if errorCode in SILENT_CODES:
+            return
+
+        # 类别 2：已知警告，降级 DEBUG
+        DEBUG_CODES = {
+            10167,  # 无订阅，显示延迟
+            10197,  # 多会话无市场数据
+            2106,   # 农场正常
+            2107,   # 农场断开
+            2158,   # Sec-def 农场正常
+        }
+        if errorCode in DEBUG_CODES:
+            log.debug(f"IBKR [{errorCode}] {errorString} (reqId={reqId})")
+            return
+
+        # 类别 3：其他都打印（保留线索）
+        log.warning(f"IBKR Error {errorCode}: {errorString} (reqId={reqId})")
 
     def disconnect(self):
         if self.ib.isConnected():
@@ -223,29 +307,8 @@ class IBKRClient:
 
         return result    
 
-    # def buy(self, code, amount_usd, price):
-    #     qty = int(amount_usd    // price)   
-    #     if qty <= 0:
-    #         return None
-    #     contract = self._get_contract(code)
-    #     if contract is None:
-    #         return None
-    #     order = MarketOrder("BUY", qty)
-    #     trade = self.ib.placeOrder(contract, order)
-    #     self.ib.sleep(2)
-    #     log.info(f"买入 {code} 数量 {qty} 状态 {trade.orderStatus.status}")
-    #     return trade
 
-    # def sell_all(self, code, qty):
-    #     contract = self._get_contract(code)
-    #     if contract is None:
-    #         return None
-    #     order = MarketOrder("SELL", int(qty))
-    #     trade = self.ib.placeOrder(contract, order)
-    #     self.ib.sleep(2)
-    #     log.info(f"卖出 {code} 数量 {qty} 状态 {trade.orderStatus.status}")
-    #     return trade
-    def buy(self, code, amount_usd, price, wait_seconds=10):
+    def buy(self, code, amount_usd, price, wait_seconds=30):
         """按金额买入，等终态"""
         qty = int(amount_usd // price)
         if qty <= 0:
@@ -273,7 +336,7 @@ class IBKRClient:
                  f"filled={trade.orderStatus.filled}")
         return trade
 
-    def sell_all(self, code, qty, wait_seconds=10):
+    def sell_all(self, code, qty, wait_seconds=30):
         """清仓卖出，等终态"""
         contract = self._get_contract(code)
         if contract is None:

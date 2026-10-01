@@ -136,3 +136,27 @@ def append_loss_watch(code, cost, low, max_loss, note=""):
     ws.append([code, cost, low, max_loss,
                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), note])
     wb.save(Config.LOSS_WATCH)
+
+def append_out_of_range(code, range_type, price, ref_value, note=""):
+    """
+    记录超出区间
+    range_type: 'high' or 'low'
+    """
+    if range_type == "high":
+        path = Config.OUT_OF_RANGE_HIGH
+        headers = ["代码", "记录时间", "当前价", "区间最高", "备注"]
+    else:
+        path = Config.OUT_OF_RANGE_LOW
+        headers = ["代码", "记录时间", "当前价", "区间最低", "备注"]
+
+    _ensure_file(path, headers)
+    wb = load_workbook(path)
+    ws = wb.active
+    ws.append([
+        code,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        price,
+        ref_value,
+        note,
+    ])
+    wb.save(path)

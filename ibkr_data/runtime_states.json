@@ -2,8 +2,8 @@
   "sell": {
     "AAPL": {
       "activated": true,
-      "max_price": 339.05,
-      "last_push_profit": 10,
+      "max_price": 342.79,
+      "last_push_profit": 11,
       "is_loss_watch": false
     },
     "ORGO": {
@@ -58,7 +58,7 @@
     },
     "ICCM": {
       "activated": true,
-      "min_price": 1.98
+      "min_price": 1.95
     },
     "WETO": {
       "activated": true,

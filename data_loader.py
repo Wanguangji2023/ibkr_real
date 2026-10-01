@@ -124,9 +124,21 @@ def _read_xlsx_pool(path):
         try:
             buy_price = float(buy_price)
         except (ValueError, TypeError):
+            continue    
+        sheet2_rows[code] = {"buy_price": buy_price}
+
+        # ★ 新增：读 C 列（区间最高）、D 列（区间最低）
+        try:
+            range_high = float(ws2.cell(row=r, column=3).value)  # C
+            range_low = float(ws2.cell(row=r, column=4).value)   # D
+        except (ValueError, TypeError):
             continue
 
-        sheet2_rows[code] = {"buy_price": buy_price}
+        sheet2_rows[code] = {
+            "buy_price": buy_price,
+            "range_high": range_high,
+            "range_low": range_low,
+        }        
 
     # ---- Sheet1 ----
     ws1 = wb[Config.SHEET1_NAME]
@@ -153,6 +165,8 @@ def _read_xlsx_pool(path):
                 "xlsx_code": code,
                 "range": sheet1_rows[code]["range"],
                 "buy_price": info["buy_price"],
+                    "range_high": info["range_high"],   # ★ 新增
+                    "range_low": info["range_low"],     # ★ 新增                
             }
     return pool
 
@@ -162,3 +176,5 @@ def load_buy_pool():
     pool.update(_read_xlsx_pool(Config.XLSX_ABOVE))
     pool.update(_read_xlsx_pool(Config.XLSX_BELOW))
     return pool
+
+    

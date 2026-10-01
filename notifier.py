@@ -12,7 +12,7 @@ log = get_logger("notifier")
 _last_push = {}
 
 
-def _can_push(key):
+def _can_push(key): 
     if key is None:
         return True
     now = time.time()
@@ -86,11 +86,27 @@ def _feishu(text):
 
 
 # ========== 统一入口 ==========
+# def push(text, key=None):
+#     if not _can_push(key):
+#         return
+#     if Config.PUSH_MODE in ("dingding", "both"):
+#         _dingding(text)
+#     if Config.PUSH_MODE in ("feishu", "both"):
+#         _feishu(text)
+#     log.info(f"[PUSH] {text}")
 def push(text, key=None):
-    if not _can_push(key):
-        return
-    if Config.PUSH_MODE in ("dingding", "both"):
-        _dingding(text)
-    if Config.PUSH_MODE in ("feishu", "both"):
-        _feishu(text)
-    log.info(f"[PUSH] {text}")
+    """推送消息。内部已捕获异常，永不抛出"""
+    try:
+        if not _can_push(key):
+            return
+        if Config.PUSH_MODE in ("dingding", "both"):
+            _dingding(text)
+        if Config.PUSH_MODE in ("feishu", "both"):
+            _feishu(text)
+        log.info(f"[PUSH] {text}")
+    except Exception as e:  
+        # 推送失败不影响主流程
+        try:
+            log.error(f"推送异常: {e}")
+        except Exception:
+            pass

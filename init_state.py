@@ -12,6 +12,8 @@ FILES = {
     "silence_list.xlsx":  ["代码", "卖出日期", "静默到期日", "备注"],
     "loss_watch.xlsx":    ["代码", "成本价", "最低价", "最大亏损%", "记录日期", "备注"],
     "invalid_contracts.xlsx": ["代码", "记录时间", "原因"],
+    "out_of_range_high.xlsx":  ["代码", "记录时间", "当前价", "区间最高", "备注"],
+    "out_of_range_low.xlsx":   ["代码", "记录时间", "当前价", "区间最低", "备注"],
 }
 
 
