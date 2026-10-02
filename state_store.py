@@ -81,6 +81,20 @@ def append_executed_buy(code, name, price, qty, amount, status):
     ws.append([code, name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                price, qty, amount, status])
     wb.save(Config.EXECUTED_BUYS)
+def update_executed_status(code, new_status):
+    """更新 executed_buys.xlsx 里某代码的状态"""
+    _ensure_file(Config.EXECUTED_BUYS,
+                 ["代码", "名称", "买入日期", "买入价", "数量", "金额", "状态"])
+    wb = load_workbook(Config.EXECUTED_BUYS)
+    ws = wb.active
+    updated = False
+    for r in range(2, ws.max_row + 1):
+        if str(ws.cell(row=r, column=1).value or "").strip() == code:
+            ws.cell(row=r, column=7).value = new_status
+            updated = True
+            break
+    wb.save(Config.EXECUTED_BUYS)
+    return updated    
 
 
 def load_silence(active_only=True):

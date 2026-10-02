@@ -1,14 +1,17 @@
 import time
 from datetime import datetime
-
+from portfolio import save_portfolio
 from config import Config, check_files, print_runtime_info
 from logger import get_logger
 import market_time
 import notifier
 from data_loader import load_holding_csv, load_buy_pool
+# from state_store import (load_executed_buys, load_silence,
+#                          append_executed_buy, append_silence,
+#                          append_out_of_range)   # ★ 新增
 from state_store import (load_executed_buys, load_silence,
                          append_executed_buy, append_silence,
-                         append_out_of_range)   # ★ 新增
+                         append_out_of_range, update_executed_status)
 from strategy.sell_strategy import PositionState, evaluate_sell
 from strategy.buy_strategy import BuyState, evaluate_buy
 from broker.ibkr_client import IBKRClient
@@ -109,13 +112,11 @@ def run_sell(client):
     codes = list(holdings.keys())
     prices = client.prices_batch(codes)
     log.info(f"持仓行情: {len(prices)}/{len(codes)} 支成功")
-
-    # # ★ 同上判断
-    # if len(prices) == 0:  
-    #     _consecutive_no_data += 1
-    #     ...
-    # else:
-    #     _consecutive_no_data = 0
+    # ★ 保存持仓盈亏
+    try:
+        save_portfolio(holdings, prices)
+    except Exception as e:
+        log.error(f"保存 portfolio 失败: {e}")
 
     for code, h in list(holdings.items()):
         qty = h.get("qty")
@@ -292,19 +293,119 @@ def run_buy(client):
                                       holdings, balance, executed, silence)
         log.info(f"[BUY] {code} 现价{price:.4f} -> {action} ({reason})")
 
+
         # if action == "buy":
         #     if Config.AUTO_BUY:
-        #         # ★ 检查是否 RTH
-        #         if not market_time.is_trading_now(pre_post=False):
-        #             log.warning(f"{code} 买入信号，但当前非 RTH，跳过下单")
+        #         # ★ 检查是否可交易
+        #         if not market_time.is_tradable():
+        #             log.warning(f"{code} 买入信号，但当前不可交易"
+        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
         #             notifier.push(
-        #                 f"【买入信号-RTH外】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #                 key=f"buy_rth_out_{code}_{int(time.time()//60)}"
+        #                 f"【买入信号-非交易时段】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #                 key=f"buy_non_tradable_{code}_{int(time.time()//60)}"
         #             )
         #             continue
+
+        #         # RTH 内下单
+        #         try:
+        #             trade = client.buy(code, reason["amount"], price)
+        #             status = trade.orderStatus.status if trade else "失败"
+        #             append_executed_buy(code, code, price,
+        #                                 int(reason["amount"] // price),
+        #                                 reason["amount"], status)
+        #             executed.add(code)
+        #             notifier.push(
+        #                 f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #                 key=f"buy_{code}"
+        #             )
+        #         except Exception as e:
+        #             log.error(f"{code} 买入失败: {e}")
+        #             append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
+        #     else:
+        #         log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
+        #         notifier.push(
+        #             f"【买入信号-未执行】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #             key=f"buy_sig_{code}"
+        #         )
+        # if action == "buy":
+        #     if Config.AUTO_BUY:
+        #         # ★ 下单前立即加入内存黑名单
+        #         if code in executed:
+        #             log.warning(f"{code} 已在黑名单，跳过")
+        #             continue
+        #         executed.add(code)   # ← 提前加，防并发
+
+        #         # ★ 检查是否可交易
+        #         if not market_time.is_tradable():
+        #             log.warning(f"{code} 买入信号，但当前不可交易"
+        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
+        #             executed.discard(code)   # ← 取消黑名单（因为没买）
+        #             notifier.push(...)
+        #             continue
+
+        #         try:
+        #             trade = client.buy(code, reason["amount"], price)
+        #             status = trade.orderStatus.status if trade else "失败"
+        #             append_executed_buy(code, code, price,
+        #                                 int(reason["amount"] // price),
+        #                                 reason["amount"], status)
+        #             notifier.push(f"【已买入】{code} ...", key=f"buy_{code}")
+        #         except Exception as e:
+        #             log.error(f"{code} 买入失败: {e}")
+        #             append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
+        #             executed.add(code)   # 失败也记录（避免重试）
+        # if action == "buy":
+        #     if Config.AUTO_BUY:
+        #         # 检查黑名单
+        #         if code in executed:
+        #             log.warning(f"{code} 已在黑名单，跳过")
+        #             continue
+
+        #         # RTH 检查
+        #         if not market_time.is_tradable():
+        #             log.warning(f"{code} 买入信号，但当前不可交易"
+        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
+        #             notifier.push(
+        #                 f"【买入信号-非交易时段】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #                 key=f"buy_non_tradable_{code}_{int(time.time()//60)}"
+        #             )
+        #             continue
+
+        #         # ★ 下单前先写文件（Pending），失败则不买
+        #         try:
+        #             append_executed_buy(code, code, price,
+        #                                 int(reason["amount"] // price),
+        #                                 reason["amount"], "Pending")
+        #             executed.add(code)   # 内存也加
+        #         except Exception as e:
+        #             log.error(f"{code} 写入 executed_buys 失败: {e}，跳过下单")
+        #             continue
+
+        #         # ★ 下单
+        #         try:
+        #             trade = client.buy(code, reason["amount"], price)
+        #             status = trade.orderStatus.status if trade else "失败"
+        #             # 更新状态（可写第二行或更新已有行）
+        #             # 简化：只记录成功/失败
+        #             if status == "Filled":
+        #                 log.info(f"{code} 买入成功，状态 Filled")
+        #             else:
+        #                 log.warning(f"{code} 买入未完成，状态 {status}")
+        #             notifier.push(
+        #                 f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #                 key=f"buy_{code}"
+        #             )
+        #         except Exception as e:
+        #             log.error(f"{code} 买入异常: {e}")
+        #             # 不再 append_executed_buy（前面已写 Pending）        
         if action == "buy":
             if Config.AUTO_BUY:
-                # ★ 检查是否可交易
+                # 检查黑名单
+                if code in executed:
+                    log.warning(f"{code} 已在黑名单，跳过")
+                    continue
+
+                # RTH 检查
                 if not market_time.is_tradable():
                     log.warning(f"{code} 买入信号，但当前不可交易"
                                 f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
@@ -314,28 +415,40 @@ def run_buy(client):
                     )
                     continue
 
-                # RTH 内下单
+                # ★ 下单前先写文件（Pending），失败则不买
+                try:
+                    append_executed_buy(code, code, price,
+                                        int(reason["amount"] // price),
+                                        reason["amount"], "Pending")
+                    executed.add(code)   # 内存也加
+                except Exception as e:
+                    log.error(f"{code} 写入 executed_buys 失败: {e}，跳过下单")
+                    continue
+
+                # ★ 下单
                 try:
                     trade = client.buy(code, reason["amount"], price)
                     status = trade.orderStatus.status if trade else "失败"
-                    append_executed_buy(code, code, price,
-                                        int(reason["amount"] // price),
-                                        reason["amount"], status)
-                    executed.add(code)
+                    log.info(f"{code} 下单结果: {status}")
+                    # ★ 更新状态（Pending → Filled / 其他）
+                    try:
+                        from state_store import update_executed_status
+                        update_executed_status(code, status)
+                    except Exception as e:
+                        log.warning(f"{code} 更新状态失败: {e}")
+
                     notifier.push(
                         f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
                         key=f"buy_{code}"
                     )
                 except Exception as e:
-                    log.error(f"{code} 买入失败: {e}")
-                    append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
+                    log.error(f"{code} 买入异常: {e}")
             else:
                 log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
                 notifier.push(
                     f"【买入信号-未执行】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
                     key=f"buy_sig_{code}"
-                )
-
+                )        
                 
     # 清理已不在候选池的 buy_states（可选）
     for code in list(buy_states.keys()):
