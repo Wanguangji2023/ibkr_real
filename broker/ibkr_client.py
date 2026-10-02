@@ -1,5 +1,5 @@
 import math
-from ib_insync import IB, Stock, MarketOrder
+from ib_insync import IB, Stock, LimitOrder
 from config import Config
 from logger import get_logger
 from state_store import load_invalid_contracts, append_invalid_contract
@@ -307,53 +307,145 @@ class IBKRClient:
 
         return result    
 
+    # def buy(self, code, amount_usd, price, wait_seconds=30):
+    #     qty = int(amount_usd // price)
+    #     if qty <= 0:
+    #         log.warning(f"{code} 金额 {amount_usd} 不足买入 1 股")
+    #         return None
+    #     contract = self._get_contract(code)
+    #     if contract is None:
+    #         return None
+    #     order = MarketOrder("BUY", qty)
+    #     order.tif = "DAY"
+    #     trade = self.ib.placeOrder(contract, order)
 
+    #     # 第一段等待（最多 wait_seconds 秒）
+    #     deadline = time.time() + wait_seconds
+    #     while time.time() < deadline:
+    #         self.ib.sleep(0.5)
+    #         if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+    #             break
+
+    #     # ★ 二次等待：还在 Submitted/PreSubmitted，再等 30 秒
+    #     if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
+    #         log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
+    #         extra = time.time() + 30
+    #         while time.time() < extra:
+    #             self.ib.sleep(0.5)
+    #             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+    #                 break
+
+    #     log.info(f"买入 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
+    #             f"filled={trade.orderStatus.filled}")
+    #     return trade
     def buy(self, code, amount_usd, price, wait_seconds=30):
-        """按金额买入，等终态"""
+
         qty = int(amount_usd // price)
         if qty <= 0:
             log.warning(f"{code} 金额 {amount_usd} 不足买入 1 股")
             return None
-
         contract = self._get_contract(code)
         if contract is None:
             return None
 
-        order = MarketOrder("BUY", qty)
-        order.tif = "DAY"
+        # 限价单：买入允许 2% 滑点
+        slippage = Config.LIMIT_SLIPPAGE_PCT / 100.0
+        limit_price = round(price * (1 + slippage), 2)
 
+        order = LimitOrder("BUY", qty, limit_price)
+        order.tif = "DAY"
+        order.outsideRth = Config.TRADING_HOURS in ("extended", "all")
+
+        log.info(f"{code} 限价买入 {qty} 股 @ {limit_price} "
+                f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
         trade = self.ib.placeOrder(contract, order)
 
-        # 等终态或超时
+        # 第一段等待
         deadline = time.time() + wait_seconds
         while time.time() < deadline:
             self.ib.sleep(0.5)
-            status = trade.orderStatus.status
-            if status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+            if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
                 break
+
+        # ★ 二次等待
+        if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
+            log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
+            extra = time.time() + 30
+            while time.time() < extra:
+                self.ib.sleep(0.5)
+                if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+                    break
 
         log.info(f"买入 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-                 f"filled={trade.orderStatus.filled}")
-        return trade
+                f"filled={trade.orderStatus.filled}")
+        return trade    
 
+    # def sell_all(self, code, qty, wait_seconds=30):
+    #     contract = self._get_contract(code)
+    #     if contract is None:
+    #         return None
+    #     order = MarketOrder("SELL", int(qty))
+    #     order.tif = "DAY"
+    #     trade = self.ib.placeOrder(contract, order)
+
+    #     deadline = time.time() + wait_seconds
+    #     while time.time() < deadline:
+    #         self.ib.sleep(0.5)
+    #         if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+    #             break
+
+    #     # ★ 二次等待
+    #     if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
+    #         log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
+    #         extra = time.time() + 30
+    #         while time.time() < extra:
+    #             self.ib.sleep(0.5)
+    #             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+    #                 break
+
+    #     log.info(f"卖出 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
+    #             f"filled={trade.orderStatus.filled}")
+    #     return trade    
     def sell_all(self, code, qty, wait_seconds=30):
-        """清仓卖出，等终态"""
+        from ib_insync import LimitOrder
+
         contract = self._get_contract(code)
         if contract is None:
             return None
 
-        order = MarketOrder("SELL", int(qty))
-        order.tif = "DAY"
+        # 取现价
+        price = self.price(code)
+        if price is None:
+            log.error(f"{code} 无行情，无法卖出")
+            return None
 
+        # 限价单：卖出允许 2% 滑点（向下）
+        slippage = Config.LIMIT_SLIPPAGE_PCT / 100.0
+        limit_price = round(price * (1 - slippage), 2)
+
+        order = LimitOrder("SELL", int(qty), limit_price)
+        order.tif = "DAY"
+        order.outsideRth = Config.TRADING_HOURS in ("extended", "all")
+
+        log.info(f"{code} 限价卖出 {qty} 股 @ {limit_price} "
+                f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
         trade = self.ib.placeOrder(contract, order)
 
         deadline = time.time() + wait_seconds
         while time.time() < deadline:
             self.ib.sleep(0.5)
-            status = trade.orderStatus.status
-            if status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+            if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
                 break
 
+        # ★ 二次等待
+        if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
+            log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
+            extra = time.time() + 30
+            while time.time() < extra:
+                self.ib.sleep(0.5)
+                if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
+                    break
+
         log.info(f"卖出 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-                 f"filled={trade.orderStatus.filled}")
+                f"filled={trade.orderStatus.filled}")
         return trade    

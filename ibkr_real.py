@@ -137,20 +137,62 @@ def run_sell(client):
                                        in_loss_watch=st.is_loss_watch)
         log.info(f"[SELL] {code} 现价{price:.4f} -> {action} ({reason})")
 
+        # if action == "sell":
+        #     if Config.AUTO_SELL:    
+        #         try:
+        #             client.sell_all(code, qty)
+        #             append_silence(code, reason)
+        #             sell_states.pop(code, None)
+        #             notifier.push(f"【已清仓】{code} {reason}",
+        #                           key=f"sell_{code}")
+        #         except Exception as e:
+        #             log.error(f"{code} 清仓失败: {e}")
+        #     else:
+        #         log.info(f"[SELL-DRY] {code} 信号触发，但 AUTO_SELL=false")
+        #         notifier.push(f"【卖出信号-未执行】{code} {reason}",
+        #                       key=f"sell_sig_{code}")
+        # if action == "sell":
+        #     if Config.AUTO_SELL:
+        #         # ★ 检查是否 RTH
+        #         if not market_time.is_trading_now(pre_post=False):
+        #             log.warning(f"{code} 卖出信号，但当前非 RTH，跳过下单")
+        #             notifier.push(
+        #                 f"【卖出信号-RTH外】{code} {reason}",
+        #                 key=f"sell_rth_out_{code}_{int(time.time()//60)}"
+        #             )
+        #             continue
         if action == "sell":
-            if Config.AUTO_SELL:    
+            if Config.AUTO_SELL:
+                # ★ 检查是否可交易
+                if not market_time.is_tradable():
+                    log.warning(f"{code} 卖出信号，但当前不可交易"
+                                f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过")
+                    notifier.push(
+                        f"【卖出信号-非交易时段】{code} {reason}",
+                        key=f"sell_non_tradable_{code}_{int(time.time()//60)}"
+                    )
+                    continue
+
+
+                # RTH 内下单
                 try:
                     client.sell_all(code, qty)
                     append_silence(code, reason)
                     sell_states.pop(code, None)
-                    notifier.push(f"【已清仓】{code} {reason}",
-                                  key=f"sell_{code}")
+                    save_states(sell_states, buy_states)
+                    notifier.push(
+                        f"【已清仓】{code} {reason}",
+                        key=f"sell_{code}"
+                    )
                 except Exception as e:
                     log.error(f"{code} 清仓失败: {e}")
             else:
                 log.info(f"[SELL-DRY] {code} 信号触发，但 AUTO_SELL=false")
-                notifier.push(f"【卖出信号-未执行】{code} {reason}",
-                              key=f"sell_sig_{code}")
+                notifier.push(
+                    f"【卖出信号-未执行】{code} {reason}",
+                    key=f"sell_sig_{code}"
+                )
+        
                 
     # 清理已不在持仓里的 sell_states
     for code in list(sell_states.keys()):
@@ -159,72 +201,7 @@ def run_sell(client):
             sell_states.pop(code, None)
 
 
-# def run_buy(client):
-#     if not buy_pool:
-#         log.info("股票池为空")
-#         return
 
-#     balance = client.account_balance()
-#     log.info(f"账户余额 {balance:.2f} USD")
-#     #aaa
-#     # 过滤候选
-#     candidates = {}
-
-#     for code, info in buy_pool.items():
-#         if code in holdings:
-#             continue
-#         if code in executed:
-#             continue
-#         if code in silence:
-#             continue
-
-#         candidates[code] = info
-#         if not candidates:
-#             return
-#          # 批量拉行情
-#         prices = client.prices_batch(list(candidates.keys()))
-#         log.info(f"批量拉行情: {len(prices)}/{len(candidates)} 支成功")
-#         for code, info in candidates.items():
-#             price = prices.get(code)
-#             if price is None:
-#                 continue
-
-#         try:
-#             price = client.price(code)
-#         except Exception as e:  
-#             log.error(f"{code} 行情获取失败: {e}")
-#             continue
-#         if not price:
-#             log.warning(f"{code} 行情为空")
-#             continue
-
-#         st = buy_states.setdefault(code, BuyState(code))
-#         action, reason = evaluate_buy(code, info, price, st,
-#                                       holdings, balance, executed, silence)
-#         log.info(f"[BUY] {code} 现价{price:.4f} -> {action} ({reason})")
-
-#         if action == "buy":
-#             if Config.AUTO_BUY:
-#                 try:
-#                     trade = client.buy(code, reason["amount"], price)
-#                     status = trade.orderStatus.status if trade else "失败"
-#                     append_executed_buy(code, code, price,
-#                                         int(reason["amount"] // price),
-#                                         reason["amount"], status)
-#                     executed.add(code)
-#                     notifier.push(
-#                         f"【已买入】{code} 金额{reason['amount']:.2f} "
-#                         f"价格{price:.4f}",
-#                         key=f"buy_{code}"
-#                     )
-#                 except Exception as e:
-#                     log.error(f"{code} 买入失败: {e}")
-#                     append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
-#             else:
-#                 log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
-#                 notifier.push(f"【买入信号-未执行】{code} "
-#                               f"金额{reason['amount']:.2f} 价格{price:.4f}",
-#                               key=f"buy_sig_{code}")
 def run_buy(client):
     global _consecutive_no_data
 
@@ -272,20 +249,7 @@ def run_buy(client):
         if price is None:
             log.warning(f"{code} 行情为空")
             continue
-        # # 检查区间
-        # if price > info["high"]:
-        #     append_out_of_range(code, "high"    , price,
-        #                     f"现价{price} > 最高{info['high']}")
-        #     notifier.push(f"⚠️ 超出区间高 {code} {price} > {info['high']}",
-        #                 key=f"oor_high_{code}")
-        #     continue
-        # if price < info["low"]:
-        #     append_out_of_range(code, "low", price,
-        #                     f"现价{price} < 最低{info['low']}")
-        #     notifier.push(f"⚠️ 超出区间低 {code} {price} < {info['low']}",
-        #                 key=f"oor_low_{code}")
-        #     continue     
-                # ★ 检查是否超出区间
+
         range_high = info.get("range_high")
         range_low = info.get("range_low")
 
@@ -328,28 +292,49 @@ def run_buy(client):
                                       holdings, balance, executed, silence)
         log.info(f"[BUY] {code} 现价{price:.4f} -> {action} ({reason})")
 
+        # if action == "buy":
+        #     if Config.AUTO_BUY:
+        #         # ★ 检查是否 RTH
+        #         if not market_time.is_trading_now(pre_post=False):
+        #             log.warning(f"{code} 买入信号，但当前非 RTH，跳过下单")
+        #             notifier.push(
+        #                 f"【买入信号-RTH外】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+        #                 key=f"buy_rth_out_{code}_{int(time.time()//60)}"
+        #             )
+        #             continue
         if action == "buy":
             if Config.AUTO_BUY:
-                try:    
+                # ★ 检查是否可交易
+                if not market_time.is_tradable():
+                    log.warning(f"{code} 买入信号，但当前不可交易"
+                                f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
+                    notifier.push(
+                        f"【买入信号-非交易时段】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+                        key=f"buy_non_tradable_{code}_{int(time.time()//60)}"
+                    )
+                    continue
+
+                # RTH 内下单
+                try:
                     trade = client.buy(code, reason["amount"], price)
                     status = trade.orderStatus.status if trade else "失败"
                     append_executed_buy(code, code, price,
                                         int(reason["amount"] // price),
                                         reason["amount"], status)
                     executed.add(code)
-                    notifier.push(  
-                        f"【已买入】{code} 金额{reason['amount']:.2f} "
-                        f"价格{price:.4f}",
+                    notifier.push(
+                        f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
                         key=f"buy_{code}"
                     )
                 except Exception as e:
                     log.error(f"{code} 买入失败: {e}")
                     append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
             else:
-                    log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
-                    notifier.push(f"【买入信号-未执行】{code} "
-                                f"金额{reason['amount']:.2f} 价格{price:.4f}",
-                                key=f"buy_sig_{code}")
+                log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
+                notifier.push(
+                    f"【买入信号-未执行】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
+                    key=f"buy_sig_{code}"
+                )
 
                 
     # 清理已不在候选池的 buy_states（可选）
@@ -358,113 +343,7 @@ def run_buy(client):
             buy_states.pop(code, None)
 
             
-# def main():
 
-#     check_files()
-#     print_runtime_info()    
-#     log.info("=== IBKR 自动交易程序启动 ===")
-#     # refresh_static()      
-    
-#     client = IBKRClient()
-#     client.connect()
-
-#     # ★ 行情自检
-#     if not check_market_data(client):
-#         log.error("行情不可用，退出")
-#         return
-
-#     def check_market_data(client):
-#         """启动时检查行情是否可用"""
-#         price = client.price("AAPL")
-#         if price is None:
-#             log.error("❌ 行情不可用！")
-#             notifier.push(
-#                 "⚠️ 【行情告警】IBKR 行情不可用\n"
-#                 "可能原因：\n"
-#                 "1. Web 端 / 手机 App 同时登录\n"
-#                 "2. 订阅过期\n"
-#                 "3. IB Gateway 状态异常\n"
-#                 "建议：关闭其他 IBKR 登录，重启 Gateway",
-#                 key="market_data_warning"
-#             )
-#             return False
-#         log.info(f"✅ 行情自检通过：AAPL = {price}")
-#         return True
-
-
-#     # 恢复状态
-#     load_states(sell_states, buy_states, PositionState, BuyState)   
-
-#     refresh_static(client) 
-
-#     # try:
-#     #     while True:
-#     #         if Config.TRADE_ONLY_MARKET_HOURS and \
-#     #            not market_time.is_trading_now(Config.PRE_POST_MARKET):
-#     #             log.info("非交易时段，休眠到下一个开盘")
-#     #             market_time.sleep_until_next_open()
-#     #             continue
-
-#     #         # refresh_static()
-#     #         refresh_static(client) 
-#     #         refresh_holdings(client)
-
-#     #         run_sell(client)
-#     #         run_buy(client)
-
-#     #         # 保存状态
-#     #         save_states(sell_states, buy_states)
-
-#     #         # time.sleep(30)
-#     #         time.sleep(Config.LOOP_INTERVAL)
-#     # except KeyboardInterrupt:
-#     #     log.info("收到 Ctrl+C，退出")
-#     # except Exception as e:
-#     #     log.exception(f"主循环异常: {e}")
-#     #     notifier.push(f"【程序异常】{e}", key="fatal") # key 固定，但只推一次
-#     # finally:
-#     #     client.disconnect()
-#     try:
-#         while True:
-#             # 检查连接
-#             if not client.ib.isConnected():
-#                 log.warning("IBKR 断线，尝试重连")
-#                 if not client.reconnect():
-#                     notifier.push("【IBKR 断线】重连失败，程序退出", key="fatal")
-#                     break
-#                 log.info("重连成功，继续运行")
-
-#             if Config.TRADE_ONLY_MARKET_HOURS and \
-#                not market_time.is_trading_now(Config.PRE_POST_MARKET):
-#                 log.info("非交易时段，休眠到下一个开盘")
-#                 market_time.sleep_until_next_open()
-#                 continue
-
-#             # ★ 内部 try/except：异常不退出主循环
-#             try:
-#                 refresh_static(client)
-#                 refresh_holdings(client)
-#                 run_sell(client)
-#                 run_buy(client)
-#                 save_states(sell_states, buy_states)
-#             except ConnectionError as e:
-#                 log.warning(f"连接异常: {e}，下一轮将尝试重连")
-#             except Exception as e:
-#                 log.exception(f"循环异常: {e}")
-#                 notifier.push(f"【循环异常】{e}", key=f"loop_err_{int(time.time())}")
-#                 time.sleep(30)
-#                 continue
-
-#             time.sleep(Config.LOOP_INTERVAL)
-#     except KeyboardInterrupt:
-#         log.info("收到 Ctrl+C，退出")
-#     finally:
-#         if client.ib.isConnected():
-#             client.disconnect() 
-#         log.info("程序退出")
-
-# if __name__ == "__main__":
-#     main()
 def check_market_data(client):
     """启动时检查行情是否可用"""
     price = client.price("AAPL")

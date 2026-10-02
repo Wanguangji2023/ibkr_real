@@ -49,3 +49,16 @@ def sleep_until_next_open():
     delta = (target - now_et()).total_seconds()
     if delta > 0:
         time.sleep(delta)
+
+def is_tradable():
+    """根据 TRADING_HOURS 配置判断当前是否可下单"""
+    from config import Config
+    mode = Config.TRADING_HOURS
+    if mode == "rth":
+        return is_trading_now(pre_post=False)
+    elif mode == "extended":
+        return is_trading_now(pre_post=True)
+    elif mode == "all":
+        return True
+    else:
+        return is_trading_now(pre_post=False)

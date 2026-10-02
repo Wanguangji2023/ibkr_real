@@ -58,6 +58,10 @@ class Config:
     LOG_DIR = os.getenv("LOG_DIR", "ibkr_data/logs")
     LOG_MAX_FILES = int(os.getenv("LOG_MAX_FILES", "10"))
     LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+    # 交易时段（rth/extended/all）
+    TRADING_HOURS = os.getenv("TRADING_HOURS", "rth").lower()
+    # 盘前盘后/夜盘限价单滑点（%）
+    LIMIT_SLIPPAGE_PCT = float(os.getenv("LIMIT_SLIPPAGE_PCT", "2.0"))
 
     # 派生路径
     EXECUTED_BUYS = os.path.join(DATA_DIR, "executed_buys.xlsx")
