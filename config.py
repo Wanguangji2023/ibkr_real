@@ -68,6 +68,12 @@ class Config:
     # 买入池筛选颜色（yellow/red/both）
     BUY_POOL_COLOR = os.getenv("BUY_POOL_COLOR", "yellow").lower()
 
+    STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "6.25")) / 100.0
+    # 高于此涨幅，用固定回撤
+    HIGH_PROFIT_THRESHOLD = float(os.getenv("HIGH_PROFIT_THRESHOLD", "20.0")) / 100.0
+    # 高涨幅时的固定回撤
+    HIGH_PROFIT_DRAWDOWN = float(os.getenv("HIGH_PROFIT_DRAWDOWN", "1.5")) / 100.0
+
     # 派生路径
     EXECUTED_BUYS = os.path.join(DATA_DIR, "executed_buys.xlsx")
     SILENCE_LIST = os.path.join(DATA_DIR, "silence_list.xlsx")

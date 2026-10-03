@@ -164,30 +164,6 @@ def run_sell(client):
                                        in_loss_watch=st.is_loss_watch)
         log.info(f"[SELL] {code} 现价{price:.4f} -> {action} ({reason})")
 
-        # if action == "sell":
-        #     if Config.AUTO_SELL:    
-        #         try:
-        #             client.sell_all(code, qty)
-        #             append_silence(code, reason)
-        #             sell_states.pop(code, None)
-        #             notifier.push(f"【已清仓】{code} {reason}",
-        #                           key=f"sell_{code}")
-        #         except Exception as e:
-        #             log.error(f"{code} 清仓失败: {e}")
-        #     else:
-        #         log.info(f"[SELL-DRY] {code} 信号触发，但 AUTO_SELL=false")
-        #         notifier.push(f"【卖出信号-未执行】{code} {reason}",
-        #                       key=f"sell_sig_{code}")
-        # if action == "sell":
-        #     if Config.AUTO_SELL:
-        #         # ★ 检查是否 RTH
-        #         if not market_time.is_trading_now(pre_post=False):
-        #             log.warning(f"{code} 卖出信号，但当前非 RTH，跳过下单")
-        #             notifier.push(
-        #                 f"【卖出信号-RTH外】{code} {reason}",
-        #                 key=f"sell_rth_out_{code}_{int(time.time()//60)}"
-        #             )
-        #             continue
         if action == "sell":
             if Config.AUTO_SELL:
                 # ★ 检查是否可交易
@@ -211,6 +187,16 @@ def run_sell(client):
                         f"【已清仓】{code} {reason}",
                         key=f"sell_{code}"
                     )
+                    
+                    # ★★★ 止损时加入黑名单
+                    if "止损" in reason:
+                        try:
+                            append_executed_buy(code, code, cost, qty, qty * cost, "StopLoss")
+                            executed.add(code)
+                            log.info(f"{code} 止损，已加入黑名单")
+                        except Exception as e:
+                            log.error(f"{code} 加入黑名单失败: {e}")
+
                 except Exception as e:
                     log.error(f"{code} 清仓失败: {e}")
             else:

@@ -38,15 +38,33 @@ def _load_tp_table():
 _TP_TABLE = _load_tp_table()
 
 
+# def _drawdown_for(profit_ratio):
+#     """
+#     返回当前盈利对应的回撤比例。
+#     若盈利 < 表中最低档，返回 None，表示动态止盈未生效。
+#     """
+#     if not _TP_TABLE:
+#         return None
+#     if profit_ratio < _TP_TABLE[0][0]:
+#         return None
+#     dd = _TP_TABLE[0][1]
+#     for p, d in _TP_TABLE:
+#         if profit_ratio >= p:
+#             dd = d
+#         else:
+#             break
+#     return dd
 def _drawdown_for(profit_ratio):
-    """
-    返回当前盈利对应的回撤比例。
-    若盈利 < 表中最低档，返回 None，表示动态止盈未生效。
-    """
     if not _TP_TABLE:
         return None
     if profit_ratio < _TP_TABLE[0][0]:
         return None
+
+    # ★★★ 涨幅 > HIGH_PROFIT_THRESHOLD：用固定回撤
+    if profit_ratio > Config.HIGH_PROFIT_THRESHOLD:
+        return Config.HIGH_PROFIT_DRAWDOWN
+
+    # 涨幅 ≤ HIGH_PROFIT_THRESHOLD：用动态表
     dd = _TP_TABLE[0][1]
     for p, d in _TP_TABLE:
         if profit_ratio >= p:
@@ -54,7 +72,6 @@ def _drawdown_for(profit_ratio):
         else:
             break
     return dd
-
 
 class PositionState:
     def __init__(self, code):
@@ -72,8 +89,12 @@ def evaluate_sell(code, cost, qty, price, state: PositionState,
 
     profit_ratio = (price - cost) / cost
 
+    # ★★★ 止损：亏损 ≥ STOP_LOSS_PCT（如 6.25%）
+    if profit_ratio <= -Config.STOP_LOSS_PCT:
+        return "sell", f"止损清仓（亏损 {profit_ratio:.2%}）"
+    
     # ---- 亏损 >5%：记录 ----
-    if profit_ratio < -0.05 and not in_loss_watch:
+    if profit_ratio <= -0.05 and not in_loss_watch:
         append_loss_watch(code, cost, price, profit_ratio)
         log.info(f"{code} 亏损 {profit_ratio:.2%}，已记录到 loss_watch")
         in_loss_watch = True

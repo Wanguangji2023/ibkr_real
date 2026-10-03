@@ -1,70 +1,30 @@
+# broker/ibkr_client.py
 import math
-from ib_insync import IB, Stock, LimitOrder
+import time
+from ib_insync import IB, Stock, MarketOrder, LimitOrder
 from config import Config
 from logger import get_logger
 from state_store import load_invalid_contracts, append_invalid_contract
-import time
-# 顶部
-import logging
-# ib_insync 的 INFO/DEBUG 太多了，只保留 WARNING 及以上
-logging.getLogger("ib_insync").setLevel(logging.WARNING)
 
 log = get_logger("ibkr")
 
 MDT_NAMES = {1: "Live", 2: "Frozen", 3: "Delayed", 4: "Delayed-Frozen"}
-def prices_batch(self, codes):
-    """批量拉行情，返回 {code: price}"""
-    contracts = {}
-    tickers = {}
-    for code in codes:
-        c = self._get_contract(code)
-        if c is None:
-            continue
-        contracts[code] = c
-        tickers[code] = self.ib.reqMktData(c, "", False, False)
 
-    self.ib.sleep(3)   # 一次性等待所有行情
-
-    result = {}
-    for code, ticker in tickers.items():
-        for attr in ("marketPrice", "last", "close", "bid", "ask"):
-            try:
-                val = getattr(ticker, attr)
-                if callable(val):
-                    val = val()
-            except Exception:
-                val = None
-            if val is None:
-                continue
-            try:
-                fval = float(val)
-            except (ValueError, TypeError):
-                continue
-            if not math.isnan(fval) and fval > 0:
-                result[code] = fval
-                break   
-
-    for c in contracts.values():
-        self.ib.cancelMktData(c)
-
-    return result
 
 class IBKRClient:
     def __init__(self):
         self.ib = IB()
         self._qualified = {}
-        self._invalid = load_invalid_contracts()   # ← 关键：加载黑名单
-        # print(f"[DEBUG] IBKRClient init: _in    valid = {self._invalid}")
-        log.info(f"IBKRClient 加载无效合            约 {len(self._invalid)} 条: {self._invalid}")
+        self._invalid = load_invalid_contracts()
 
     def connect(self):
         self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
                         clientId=Config.IBKR_CLIENT_ID)
         log.info(f"已连接 IBKR {Config.IBKR_HOST}:{Config.IBKR_PORT} "
                  f"账户 {self.ib.managedAccounts()}")
-        
-        # 注册错误处理（过滤 10197）
-        self.ib.errorEvent += self._on_error                     # ← 加这行
+
+        # 注册错误处理
+        self.ib.errorEvent += self._on_error
 
         mdt = Config.MARKET_DATA_TYPE
         try:
@@ -72,83 +32,42 @@ class IBKRClient:
             log.info(f"行情类型: {mdt} ({MDT_NAMES.get(mdt, '?')})")
         except Exception as e:
             log.warning(f"设置行情类型失败: {e}")
-    #无数次重连
-    def reconnect(self, interval=30):
-        """无限重连，直到成功"""
-        while True:
-            if self.ib.isConnected():
-                return True
-            try:
-                self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
-                                clientId=Config.IBKR_CLIENT_ID)
-                log.info("重连成功")
-                # 恢复行情类型
-                self.ib.reqMarketDataType(Config.MARKET_DATA_TYPE)
-                # 清空合约缓存，重新 qualify
-                self._qualified.clear()
-                return True
-            except Exception as e:
-                log.warning(f"重连失败: {e}")
-                time.sleep(interval)
-    #重试十次方案        
-    # def reconnect(self, max_retries=10, interval=30):
-    #     """断线重连"""
-    #     if self.ib.isConnected():
-    #         return True
 
-    #     for i in range(max_retries):
-    #         try:
-    #             self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
-    #                             clientId=Config.IBKR_CLIENT_ID)
-    #             log.info(f"重连成功（第 {i+1} 次尝试）")
-    #             self.ib.reqMarketDataType(Config.MARKET_DATA_TYPE)
-    #             self._qualified.clear()   # 清空合约缓存
-    #             return True
-    #         except Exception as e:
-    #             log.warning(f"重连失败（第 {i+1}/{max_retries}）: {e}")
-    #             time.sleep(interval)
-
-    #     log.error(f"重连 {max_retries} 次失败")
-    #     return False        
-    
-
-    # def _on_error(self, reqId, errorCode, errorString, contract):
-    #     """拦截 IBKR 错误，过滤 10197（订阅不足）"""
-    #     if errorCode == 10197:
-    #         # 静默忽略：模拟账户订阅不足，延迟行情仍可用
-    #         return
-    #     # 其他错误照常打印
-    #     log.warning(f"IBKR Error {errorCode}: {errorString} (reqId={reqId})")    
     def _on_error(self, reqId, errorCode, errorString, contract):
-        """
-        分级处理 IBKR 错误：
-        - 纯噪音：静默忽略
-        - 已知警告：降级为 DEBUG
-        - 其他：WARNING
-        """
-        # 类别 1：纯噪音
-        SILENT_CODES = {
-            2103,   # 农场连接中断
-            2104,   # 农场连接正常
-            2119,   # 正在连接农场
-        }
+        """分级处理 IBKR 错误"""
+        SILENT_CODES = {2103, 2104, 2119}
         if errorCode in SILENT_CODES:
             return
-
-        # 类别 2：已知警告，降级 DEBUG
-        DEBUG_CODES = {
-            10167,  # 无订阅，显示延迟
-            10197,  # 多会话无市场数据
-            2106,   # 农场正常
-            2107,   # 农场断开
-            2158,   # Sec-def 农场正常
-        }
+        DEBUG_CODES = {10167, 10197, 2105, 2106, 2107, 2158}
         if errorCode in DEBUG_CODES:
             log.debug(f"IBKR [{errorCode}] {errorString} (reqId={reqId})")
             return
-
-        # 类别 3：其他都打印（保留线索）
         log.warning(f"IBKR Error {errorCode}: {errorString} (reqId={reqId})")
+
+    def reconnect(self, interval=30):
+        """无限重连"""
+        attempt = 0
+        while True:
+            if self.ib.isConnected():
+                return True
+            attempt += 1
+            try:
+                self.ib.connect(Config.IBKR_HOST, Config.IBKR_PORT,
+                                clientId=Config.IBKR_CLIENT_ID)
+                log.info(f"重连成功（第 {attempt} 次尝试）")
+                self.ib.reqMarketDataType(Config.MARKET_DATA_TYPE)
+                self._qualified.clear()
+                return True
+            except Exception as e:
+                log.warning(f"重连失败（第 {attempt} 次）: {e}")
+                if attempt % 10 == 0:
+                    try:
+                        from notifier import push
+                        push(f"⚠️ 【IBKR 重连】已重试 {attempt} 次仍未成功",
+                             key=f"reconnect_alert_{attempt}")
+                    except Exception:
+                        pass
+                time.sleep(interval)
 
     def disconnect(self):
         if self.ib.isConnected():
@@ -190,19 +109,15 @@ class IBKRClient:
         return result
 
     def _get_contract(self, code):
-        # 已知无效，直接返回 None，不做任何请求
         if code in self._invalid:
             return None
-
-        # 缓存命中
         if code in self._qualified:
             return self._qualified[code]
-        
-        # 防止未连接时全部失败
+
         if not self.ib.isConnected():
             log.error("IBKR 未连接，无法 qualifyContracts")
             return None
-        
+
         contract = Stock(code, "SMART", "USD")
         try:
             qualified = self.ib.qualifyContracts(contract)
@@ -224,7 +139,7 @@ class IBKRClient:
     def price(self, code, retry=2):
         contract = self._get_contract(code)
         if contract is None:
-            return None 
+            return None
 
         for attempt in range(retry):
             try:
@@ -256,31 +171,32 @@ class IBKRClient:
 
         log.warning(f"{code} 无有效价格")
         return None
-    def prices_batch(self, codes):
-        """
-        批量拉行情，返回 {code: price}。
-        一次性订阅所有代码，等 3 秒后统一取价，再取消订阅。
-        """
-        contracts = {}
-        tickers = {}
 
+    def prices_batch(self, codes):
+        """批量拉行情（不占订阅位）"""
+        contracts = []
+        code_map = {}
         for code in codes:
             c = self._get_contract(code)
             if c is None:
                 continue
-            contracts[code] = c
-            try:
-                tickers[code] = self.ib.reqMktData(c, "", False, False)
-            except Exception as e:
-                log.warning(f"{code} reqMktData 失败: {e}")
+            contracts.append(c)
+            code_map[c.conId] = code
 
-        if not tickers:
+        if not contracts:
             return {}
 
-        self.ib.sleep(3)   # 一次性等所有行情返回
+        try:
+            tickers = self.ib.reqTickers(*contracts)
+        except Exception as e:
+            log.error(f"reqTickers 失败: {e}")
+            return {}
 
         result = {}
-        for code, ticker in tickers.items():
+        for ticker in tickers:
+            code = code_map.get(ticker.contract.conId)
+            if not code:
+                continue
             for attr in ("marketPrice", "last", "close", "bid", "ask"):
                 try:
                     val = getattr(ticker, attr)
@@ -298,48 +214,9 @@ class IBKRClient:
                     result[code] = fval
                     break
 
-        # 取消订阅，避免行情泄漏
-        for c in contracts.values():
-            try:
-                self.ib.cancelMktData(c)
-            except Exception:
-                pass
+        return result
 
-        return result    
-
-    # def buy(self, code, amount_usd, price, wait_seconds=30):
-    #     qty = int(amount_usd // price)
-    #     if qty <= 0:
-    #         log.warning(f"{code} 金额 {amount_usd} 不足买入 1 股")
-    #         return None
-    #     contract = self._get_contract(code)
-    #     if contract is None:
-    #         return None
-    #     order = MarketOrder("BUY", qty)
-    #     order.tif = "DAY"
-    #     trade = self.ib.placeOrder(contract, order)
-
-    #     # 第一段等待（最多 wait_seconds 秒）
-    #     deadline = time.time() + wait_seconds
-    #     while time.time() < deadline:
-    #         self.ib.sleep(0.5)
-    #         if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
-    #             break
-
-    #     # ★ 二次等待：还在 Submitted/PreSubmitted，再等 30 秒
-    #     if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
-    #         log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
-    #         extra = time.time() + 30
-    #         while time.time() < extra:
-    #             self.ib.sleep(0.5)
-    #             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
-    #                 break
-
-    #     log.info(f"买入 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-    #             f"filled={trade.orderStatus.filled}")
-    #     return trade
     def buy(self, code, amount_usd, price, wait_seconds=30):
-
         qty = int(amount_usd // price)
         if qty <= 0:
             log.warning(f"{code} 金额 {amount_usd} 不足买入 1 股")
@@ -348,7 +225,7 @@ class IBKRClient:
         if contract is None:
             return None
 
-        # 限价单：买入允许 2% 滑点
+        # 限价单：允许 2% 滑点
         slippage = Config.LIMIT_SLIPPAGE_PCT / 100.0
         limit_price = round(price * (1 + slippage), 2)
 
@@ -357,7 +234,7 @@ class IBKRClient:
         order.outsideRth = Config.TRADING_HOURS in ("extended", "all")
 
         log.info(f"{code} 限价买入 {qty} 股 @ {limit_price} "
-                f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
+                 f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
         trade = self.ib.placeOrder(contract, order)
 
         # 第一段等待
@@ -367,7 +244,7 @@ class IBKRClient:
             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
                 break
 
-        # ★ 二次等待
+        # 二次等待
         if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
             log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
             extra = time.time() + 30
@@ -377,49 +254,19 @@ class IBKRClient:
                     break
 
         log.info(f"买入 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-                f"filled={trade.orderStatus.filled}")
-        return trade    
+                 f"filled={trade.orderStatus.filled}")
+        return trade
 
-    # def sell_all(self, code, qty, wait_seconds=30):
-    #     contract = self._get_contract(code)
-    #     if contract is None:
-    #         return None
-    #     order = MarketOrder("SELL", int(qty))
-    #     order.tif = "DAY"
-    #     trade = self.ib.placeOrder(contract, order)
-
-    #     deadline = time.time() + wait_seconds
-    #     while time.time() < deadline:
-    #         self.ib.sleep(0.5)
-    #         if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
-    #             break
-
-    #     # ★ 二次等待
-    #     if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
-    #         log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
-    #         extra = time.time() + 30
-    #         while time.time() < extra:
-    #             self.ib.sleep(0.5)
-    #             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
-    #                 break
-
-    #     log.info(f"卖出 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-    #             f"filled={trade.orderStatus.filled}")
-    #     return trade    
     def sell_all(self, code, qty, wait_seconds=30):
-        from ib_insync import LimitOrder
-
         contract = self._get_contract(code)
         if contract is None:
             return None
 
-        # 取现价
         price = self.price(code)
         if price is None:
             log.error(f"{code} 无行情，无法卖出")
             return None
 
-        # 限价单：卖出允许 2% 滑点（向下）
         slippage = Config.LIMIT_SLIPPAGE_PCT / 100.0
         limit_price = round(price * (1 - slippage), 2)
 
@@ -428,16 +275,17 @@ class IBKRClient:
         order.outsideRth = Config.TRADING_HOURS in ("extended", "all")
 
         log.info(f"{code} 限价卖出 {qty} 股 @ {limit_price} "
-                f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
+                 f"(现价 {price}, 滑点 {Config.LIMIT_SLIPPAGE_PCT}%)")
         trade = self.ib.placeOrder(contract, order)
 
+        # 第一段等待
         deadline = time.time() + wait_seconds
         while time.time() < deadline:
             self.ib.sleep(0.5)
             if trade.orderStatus.status in ("Filled", "Cancelled", "ApiCancelled", "Inactive"):
                 break
 
-        # ★ 二次等待
+        # 二次等待
         if trade.orderStatus.status in ("Submitted", "PreSubmitted", "PendingSubmit"):
             log.warning(f"{code} 订单未终态（{trade.orderStatus.status}），再等 30 秒")
             extra = time.time() + 30
@@ -447,5 +295,5 @@ class IBKRClient:
                     break
 
         log.info(f"卖出 {code} 数量 {qty} 最终状态 {trade.orderStatus.status} "
-                f"filled={trade.orderStatus.filled}")
-        return trade    
+                 f"filled={trade.orderStatus.filled}")
+        return trade
