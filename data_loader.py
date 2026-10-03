@@ -3,6 +3,11 @@ import os
 import pandas as pd
 from openpyxl import load_workbook
 from config import Config
+import glob
+
+from logger import get_logger
+log = get_logger("data_loader")
+_logged_once = False
 
 RANGE_ORDER = [
     "1-2", "2-4", "4-8", "8-16", "16-32", "32-64",
@@ -104,7 +109,20 @@ def _read_xlsx_pool(path):
             continue
         code = str(code).strip()
 
-        # 黄色背景
+        # # 黄色背景
+        # fill = cell_a.fill
+        # if fill is None or fill.fill_type != "solid":
+        #     continue
+        # rgb = fill.start_color.rgb
+        # if rgb is None:
+        #     continue
+        # rgb = str(rgb).upper()
+        # if len(rgb) == 8:
+        #     rgb = rgb[2:]
+        # if rgb != "FFFF00":
+        #     continue
+
+        # 判断颜色（根据 BUY_POOL_COLOR）
         fill = cell_a.fill
         if fill is None or fill.fill_type != "solid":
             continue
@@ -114,7 +132,19 @@ def _read_xlsx_pool(path):
         rgb = str(rgb).upper()
         if len(rgb) == 8:
             rgb = rgb[2:]
-        if rgb != "FFFF00":
+
+        # 允许的颜色集合
+        mode = Config.BUY_POOL_COLOR
+        if mode == "yellow":
+            allowed = {"FFFF00"}
+        elif mode == "red":
+            allowed = {"FF0000", "FFC000"}  # 红 + 橙
+        elif mode == "both":
+            allowed = {"FFFF00", "FF0000", "FFC000"}
+        else:
+            allowed = {"FFFF00"}   # 默认黄
+
+        if rgb not in allowed:
             continue
 
         # I 列：先读缓存，None 则手动算
@@ -171,10 +201,76 @@ def _read_xlsx_pool(path):
     return pool
 
 
-def load_buy_pool():
-    pool = {}
-    pool.update(_read_xlsx_pool(Config.XLSX_ABOVE))
-    pool.update(_read_xlsx_pool(Config.XLSX_BELOW))
-    return pool
 
-    
+# def load_buy_pool():
+#     """加载 input_data 目录下所有 xlsx"""
+#     import glob
+
+#     pool = {}
+#     input_dir = Config.INPUT_DIR
+
+#     if not os.path.isdir(input_dir):
+#         os.makedirs(input_dir, exist_ok=True)
+#         print(f"⚠️ 目录不存在，已创建: {input_dir}")
+#         print(f"请把 xlsx 文件放入 {input_dir}/")
+#         return pool
+
+#     files = sorted(glob.glob(os.path.join(input_dir, "*.xlsx")))
+#     # 排除 Excel 临时文件（~$ 开头）
+#     files = [f for f in files if not os.path.basename(f).startswith("~$")]
+
+#     if not files:
+#         print(f"⚠️ {input_dir}/ 下没有 .xlsx 文件")
+#         return pool
+
+#     print(f"加载 {len(files)} 个 xlsx:")
+#     for f in files:
+#         try:
+#             sub_pool = _read_xlsx_pool(f)
+#             print(f"  {os.path.basename(f)}: {len(sub_pool)} 支")
+#             pool.update(sub_pool)
+#         except Exception as e:
+#             print(f"  {os.path.basename(f)} 加载失败: {e}")
+
+#     print(f"股票池合计: {len(pool)} 支")
+#     return pool
+def load_buy_pool():
+    """加载 input_data 目录下所有 xlsx"""
+    global _logged_once
+    pool = {}
+    input_dir = Config.INPUT_DIR
+
+    if not os.path.isdir(input_dir):
+        os.makedirs(input_dir, exist_ok=True)
+        if not _logged_once:
+            log.warning(f"目录不存在，已创建: {input_dir}")
+            log.warning(f"请把 xlsx 文件放入 {input_dir}/")
+            _logged_once = True
+        return pool
+
+    files = sorted(glob.glob(os.path.join(input_dir, "*.xlsx")))
+    files = [f for f in files if not os.path.basename(f).startswith("~$")]
+
+    if not files:
+        if not _logged_once:
+            log.warning(f"{input_dir}/ 下没有 .xlsx 文件")
+            _logged_once = True
+        return pool
+
+    if not _logged_once:
+        log.info(f"加载 {len(files)} 个 xlsx:")
+
+    for f in files:
+        try:
+            sub_pool = _read_xlsx_pool(f)
+            if not _logged_once:
+                log.info(f"  {os.path.basename(f)}: {len(sub_pool)} 支")
+            pool.update(sub_pool)
+        except Exception as e:
+            log.error(f"  {os.path.basename(f)} 加载失败: {e}")
+
+    if not _logged_once:
+        log.info(f"股票池合计: {len(pool)} 支")
+        _logged_once = True
+
+    return pool

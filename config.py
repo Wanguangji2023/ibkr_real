@@ -53,6 +53,8 @@ class Config:
     HOLDING_CSV = os.getenv("HOLDING_CSV", "holding_pnl.csv")
     XLSX_ABOVE = os.getenv("XLSX_ABOVE", "US所有市值8千万以上无场外双区间相同再算幅度幅度计算okx标黄_已标注.xlsx")
     XLSX_BELOW = os.getenv("XLSX_BELOW", "US所有市值8千万以下无场外双区间相同再算幅度幅度计算okx标黄_已标注.xlsx")
+    # 输入目录（所有 .xlsx 自动加载）
+    INPUT_DIR = os.getenv("INPUT_DIR", "input_data")
 
     DATA_DIR = os.getenv("DATA_DIR", "ibkr_data")
     LOG_DIR = os.getenv("LOG_DIR", "ibkr_data/logs")
@@ -63,6 +65,9 @@ class Config:
     # 盘前盘后/夜盘限价单滑点（%）
     LIMIT_SLIPPAGE_PCT = float(os.getenv("LIMIT_SLIPPAGE_PCT", "2.0"))
 
+    # 买入池筛选颜色（yellow/red/both）
+    BUY_POOL_COLOR = os.getenv("BUY_POOL_COLOR", "yellow").lower()
+
     # 派生路径
     EXECUTED_BUYS = os.path.join(DATA_DIR, "executed_buys.xlsx")
     SILENCE_LIST = os.path.join(DATA_DIR, "silence_list.xlsx")
@@ -72,16 +77,15 @@ class Config:
     OUT_OF_RANGE_HIGH = os.path.join(DATA_DIR, "out_of_range_high.xlsx")
     OUT_OF_RANGE_LOW = os.path.join(DATA_DIR, "out_of_range_low.xlsx")
 
-# # config.py 末尾
 # def check_files():
 #     """启动时检查关键文件是否存在"""
 #     import os
 #     missing = []
 #     for name, path in [
-#         ("HOLDING_CSV", HOLDING_CSV),
-#         ("XLSX_ABOVE", XLSX_ABOVE),
-#         ("XLSX_BELOW", XLSX_BELOW),
-#         ("DYNAMIC_TP", DYNAMIC_TP),
+#         ("HOLDING_CSV", Config.HOLDING_CSV),
+#         ("XLSX_ABOVE", Config.XLSX_ABOVE),
+#         ("XLSX_BELOW", Config.XLSX_BELOW),
+#         ("DYNAMIC_TP", Config.DYNAMIC_TP),
 #     ]:
 #         if not os.path.exists(path):
 #             missing.append(f"  {name} = {path}")
@@ -89,26 +93,62 @@ class Config:
 #         print("❌ 以下文件不存在，请检查 .env：")
 #         print("\n".join(missing))
 #         raise FileNotFoundError(f"缺少 {len(missing)} 个文件")
+#     print("✅ 所有输入文件存在")
+# def check_files():
+#     missing = []
+#     for name, path in [
+#         ("HOLDING_CSV", Config.HOLDING_CSV),
+#         ("DYNAMIC_TP", Config.DYNAMIC_TP),
+#     ]:
+#         if not os.path.exists(path):
+#             missing.append(f"  {name} = {path}")
+
+#     # 检查 input_data 目录
+#     if not os.path.isdir(Config.INPUT_DIR):
+#         missing.append(f"  INPUT_DIR = {Config.INPUT_DIR}（目录不存在）")
+#     else:
+#         import glob
+#         files = glob.glob(os.path.join(Config.INPUT_DIR, "*.xlsx"))
+#         files = [f for f in files if not os.path.basename(f).startswith("~$")]
+#         if not files:
+#             missing.append(f"  INPUT_DIR = {Config.INPUT_DIR}（目录下无 .xlsx）")
+
+#     if missing:
+#         print("❌ 以下文件/目录不存在：")
+#         print("\n".join(missing))
+#         raise FileNotFoundError(f"缺少 {len(missing)} 个")
+#     print("✅ 所有输入文件存在")
+
+#     # config.py 末尾
 def check_files():
-    """启动时检查关键文件是否存在"""
-    import os
+    """检查输入文件/目录"""
     missing = []
+
+    # 必需文件
     for name, path in [
         ("HOLDING_CSV", Config.HOLDING_CSV),
-        ("XLSX_ABOVE", Config.XLSX_ABOVE),
-        ("XLSX_BELOW", Config.XLSX_BELOW),
         ("DYNAMIC_TP", Config.DYNAMIC_TP),
     ]:
         if not os.path.exists(path):
             missing.append(f"  {name} = {path}")
+
+    # input_data 目录
+    if not os.path.isdir(Config.INPUT_DIR):
+        missing.append(f"  INPUT_DIR = {Config.INPUT_DIR}（目录不存在）")
+    else:
+        import glob
+        files = glob.glob(os.path.join(Config.INPUT_DIR, "*.xlsx"))
+        files = [f for f in files if not os.path.basename(f).startswith("~$")]
+        if not files:
+            missing.append(f"  INPUT_DIR = {Config.INPUT_DIR}（目录下无 .xlsx）")
+
     if missing:
-        print("❌ 以下文件不存在，请检查 .env：")
+        print("❌ 以下文件/目录不存在：")
         print("\n".join(missing))
-        raise FileNotFoundError(f"缺少 {len(missing)} 个文件")
+        raise FileNotFoundError(f"缺少 {len(missing)} 个")
+
     print("✅ 所有输入文件存在")
-
-
-    # config.py 末尾
+    
 def print_runtime_info():
     mdt_names = {1: "Live (实时)", 2: "Frozen", 3: "Delayed (延迟)", 4: "Delayed-Frozen"}
     print(f"运行模式: {Config.MODE}")

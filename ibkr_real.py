@@ -39,63 +39,89 @@ executed = set()
 silence = set()
 
 
-# def refresh_static():
-#     """每次循环前刷新静态数据"""
+# def refresh_static(client=None, load_xlsx=True):
 #     global buy_pool, executed, silence
-#     buy_pool = load_buy_pool()
+
+#     if load_xlsx:
+#         buy_pool = load_buy_pool()
+
+#         # 只在重载 xlsx 时校验合约
+#         if client is not None and buy_pool:
+#             invalid = client.get_invalid_codes()
+#             valid_pool = {}
+#             for code, info in buy_pool.items():
+#                 if code in invalid:
+#                     continue
+#                 contract = client._get_contract(code)
+#                 if contract is None:
+#                     continue
+#                 valid_pool[code] = info
+#             buy_pool = valid_pool
+
 #     executed = load_executed_buys()
 #     silence = load_silence()
+
+#     log.info(f"股票池 {len(buy_pool)} 支；黑名单 {len(executed)}；"
+#              f"静默期 {len(silence)}")
+# def refresh_static(client=None):
+#     """刷新静态数据
+#     - buy_pool 只在首次（空）时加载 xlsx
+#     - executed / silence 每轮刷新
+#     """
+#     global buy_pool, executed, silence
+
+#     # ★ 只在首次加载 xlsx（buy_pool 为空）
+#     if not buy_pool:
+#         buy_pool = load_buy_pool()
+
+#         # 首次校验合约
+#         if client is not None and buy_pool:
+#             invalid = client.get_invalid_codes()
+#             valid_pool = {}
+#             for code, info in buy_pool.items():
+#                 if code in invalid:
+#                     continue
+#                 contract = client._get_contract(code)
+#                 if contract is None:
+#                     continue
+#                 valid_pool[code] = info
+#             buy_pool = valid_pool
+
+#     # 每轮刷新黑名单/静默期
+#     executed = load_executed_buys()
+# #     silence = load_silence()
+
 #     log.info(f"股票池 {len(buy_pool)} 支；黑名单 {len(executed)}；"
 #              f"静默期 {len(silence)}")
 def refresh_static(client=None):
-    """
-    每次循环刷新静态数据：
-    - 股票池（买入候选）
-    - 已执行买入黑名单
-    - 静默期
-    - 无效合约黑名单（持久化）
+    """刷新静态数据
+    - buy_pool 只在首次（空）时加载
+    - executed / silence 每轮刷新
     """
     global buy_pool, executed, silence
-    buy_pool = load_buy_pool()
+
+    # ★ 只在首次加载 xlsx
+    if not buy_pool:
+        buy_pool = load_buy_pool()
+
+        if client is not None and buy_pool:
+            invalid = client.get_invalid_codes()
+            valid_pool = {}
+            for code, info in buy_pool.items():
+                if code in invalid:
+                    continue
+                contract = client._get_contract(code)
+                if contract is None:
+                    continue
+                valid_pool[code] = info
+            buy_pool = valid_pool
+
+    # 每轮刷新黑名单/静默期
     executed = load_executed_buys()
     silence = load_silence()
-    # print(f"[DEBUG] refresh_static: client={client is not None}, "
-    #     f"buy_pool={len(buy_pool)}")
-
-    invalid_count = 0
-    if client is not None and buy_pool:
-        invalid = client.get_invalid_codes()
-        # print(f"[DEBUG] refresh _static: invalid = {invalid}")
-        invalid_count = len(invalid)
-        valid_pool = {}
-        for code, info in buy_pool.items():
-            # 已知无效，直接跳过
-            if code in invalid:
-                continue
-            # 第一次见到的代码，做一次 qualifyContracts
-            contract = client._get_contract(code)
-            if contract is None:
-                continue
-            valid_pool[code] = info 
-        buy_pool = valid_pool
 
     log.info(f"股票池 {len(buy_pool)} 支；黑名单 {len(executed)}；"
-             f"静默期 {len(silence)}；无效合约 {invalid_count}")
-    if buy_pool:
-        log.info(f"股票池示例: {list(buy_pool.keys())[:5]}")
-
-# def refresh_holdings(client):
-#     """实盘从 IBKR 取持仓；模拟盘用 CSV + 成本""" 
-#     global holdings
-#     if Config.MODE == "live":
-#         pos = client.positions()
-#         csv_data = load_holding_csv()
-#         holdings = {}
-#         for code, qty in pos.items():
-#             cost = csv_data.get(code, {}).get("cost")
-#             holdings[code] = {"qty": qty, "cost": cost}
-#     else:
-#         holdings = load_holding_csv()
+             f"静默期 {len(silence)}")
 def refresh_holdings(client):
     global holdings
     if Config.MODE in ("live", "demo"):
@@ -291,113 +317,15 @@ def run_buy(client):
         st = buy_states.setdefault(code, BuyState(code))
         action, reason = evaluate_buy(code, info, price, st,
                                       holdings, balance, executed, silence)
-        log.info(f"[BUY] {code} 现价{price:.4f} -> {action} ({reason})")
+        # log.info(f"[BUY] {code} 现价{price:.4f} -> {action} ({reason})")
+        # 只打印 buy 或已激活的，减少日志
+        if action == "buy":
+            log.info(f"[BUY] {code} 现价{price:.4f} -> buy")
+        elif st.activated:
+            log.info(f"[BUY] {code} 现价{price:.4f} -> hold ({reason})")
+        # 未激活的不打印
 
-
-        # if action == "buy":
-        #     if Config.AUTO_BUY:
-        #         # ★ 检查是否可交易
-        #         if not market_time.is_tradable():
-        #             log.warning(f"{code} 买入信号，但当前不可交易"
-        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
-        #             notifier.push(
-        #                 f"【买入信号-非交易时段】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #                 key=f"buy_non_tradable_{code}_{int(time.time()//60)}"
-        #             )
-        #             continue
-
-        #         # RTH 内下单
-        #         try:
-        #             trade = client.buy(code, reason["amount"], price)
-        #             status = trade.orderStatus.status if trade else "失败"
-        #             append_executed_buy(code, code, price,
-        #                                 int(reason["amount"] // price),
-        #                                 reason["amount"], status)
-        #             executed.add(code)
-        #             notifier.push(
-        #                 f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #                 key=f"buy_{code}"
-        #             )
-        #         except Exception as e:
-        #             log.error(f"{code} 买入失败: {e}")
-        #             append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
-        #     else:
-        #         log.info(f"[BUY-DRY] {code} 信号触发，但 AUTO_BUY=false")
-        #         notifier.push(
-        #             f"【买入信号-未执行】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #             key=f"buy_sig_{code}"
-        #         )
-        # if action == "buy":
-        #     if Config.AUTO_BUY:
-        #         # ★ 下单前立即加入内存黑名单
-        #         if code in executed:
-        #             log.warning(f"{code} 已在黑名单，跳过")
-        #             continue
-        #         executed.add(code)   # ← 提前加，防并发
-
-        #         # ★ 检查是否可交易
-        #         if not market_time.is_tradable():
-        #             log.warning(f"{code} 买入信号，但当前不可交易"
-        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
-        #             executed.discard(code)   # ← 取消黑名单（因为没买）
-        #             notifier.push(...)
-        #             continue
-
-        #         try:
-        #             trade = client.buy(code, reason["amount"], price)
-        #             status = trade.orderStatus.status if trade else "失败"
-        #             append_executed_buy(code, code, price,
-        #                                 int(reason["amount"] // price),
-        #                                 reason["amount"], status)
-        #             notifier.push(f"【已买入】{code} ...", key=f"buy_{code}")
-        #         except Exception as e:
-        #             log.error(f"{code} 买入失败: {e}")
-        #             append_executed_buy(code, code, price, 0, 0, f"ERROR:{e}")
-        #             executed.add(code)   # 失败也记录（避免重试）
-        # if action == "buy":
-        #     if Config.AUTO_BUY:
-        #         # 检查黑名单
-        #         if code in executed:
-        #             log.warning(f"{code} 已在黑名单，跳过")
-        #             continue
-
-        #         # RTH 检查
-        #         if not market_time.is_tradable():
-        #             log.warning(f"{code} 买入信号，但当前不可交易"
-        #                         f"（TRADING_HOURS={Config.TRADING_HOURS}），跳过下单")
-        #             notifier.push(
-        #                 f"【买入信号-非交易时段】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #                 key=f"buy_non_tradable_{code}_{int(time.time()//60)}"
-        #             )
-        #             continue
-
-        #         # ★ 下单前先写文件（Pending），失败则不买
-        #         try:
-        #             append_executed_buy(code, code, price,
-        #                                 int(reason["amount"] // price),
-        #                                 reason["amount"], "Pending")
-        #             executed.add(code)   # 内存也加
-        #         except Exception as e:
-        #             log.error(f"{code} 写入 executed_buys 失败: {e}，跳过下单")
-        #             continue
-
-        #         # ★ 下单
-        #         try:
-        #             trade = client.buy(code, reason["amount"], price)
-        #             status = trade.orderStatus.status if trade else "失败"
-        #             # 更新状态（可写第二行或更新已有行）
-        #             # 简化：只记录成功/失败
-        #             if status == "Filled":
-        #                 log.info(f"{code} 买入成功，状态 Filled")
-        #             else:
-        #                 log.warning(f"{code} 买入未完成，状态 {status}")
-        #             notifier.push(
-        #                 f"【已买入】{code} 金额{reason['amount']:.2f} 价格{price:.4f}",
-        #                 key=f"buy_{code}"
-        #             )
-        #         except Exception as e:
-        #             log.error(f"{code} 买入异常: {e}")
-        #             # 不再 append_executed_buy（前面已写 Pending）        
+      
         if action == "buy":
             if Config.AUTO_BUY:
                 # 检查黑名单
@@ -492,6 +420,7 @@ def main():
     refresh_static(client)
 
     try:
+        loop_count = 0
         while True:
             if not client.ib.isConnected():
                 log.warning("IBKR 断线，尝试重连...")
@@ -510,11 +439,14 @@ def main():
                 continue
 
             try:
+                # ★ 每 10 轮刷新 xlsx
+                # load_xlsx = (loop_count % 10 == 0)                
                 refresh_static(client)
                 refresh_holdings(client)
                 run_sell(client)
                 run_buy(client)
                 save_states(sell_states, buy_states)
+                # loop_count += 1
             except ConnectionError as e:
                 log.warning(f"连接异常: {e}，下一轮重连")
                 time.sleep(5)
